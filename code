@@ -1,0 +1,119 @@
+
+'use server';
+/**
+ * @fileOverview Un flow Genkit pour générer des mots de passe sécurisés alphanumériques.
+ *
+ * - generatePassword - Une fonction qui génère un mot de passe d'une longueur spécifiée.
+ * - GeneratePasswordInput - Le type d'entrée pour la fonction generatePassword.
+ * - GeneratePasswordOutput - Le type de retour pour la fonction generatePassword.
+ */
+
+import {ai} from '@/ai/genkit';
+import {z} from 'genkit';
+
+const GeneratePasswordInputSchema = z.object({
+  length: z
+    .number()
+    .min(8, { message: "La longueur du mot de passe doit être d'au moins 8 caractères." })
+    .max(32, { message: "La longueur du mot de passe ne doit pas dépasser 32 caractères." })
+    .describe('La longueur souhaitée du mot de passe alphanumérique.'),
+});
+export type GeneratePasswordInput = z.infer<typeof GeneratePasswordInputSchema>;
+
+const GeneratePasswordOutputSchema = z.object({
+  password: z.string().describe('Le mot de passe alphanumérique sécurisé généré.'),
+});
+export type GeneratePasswordOutput = z.infer<typeof GeneratePasswordOutputSchema>;
+
+export async function generatePassword(input: GeneratePasswordInput): Promise<GeneratePasswordOutput> {
+  return generatePasswordFlow(input);
+}
+
+const generateFallbackPassword = (length: number): string => {
+  const alphanumericChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let fallbackPassword = "";
+  if (alphanumericChars.length === 0) { 
+      console.error("Les caractères alphanumériques de secours sont vides ! Impossible de générer un mot de passe de secours robuste.");
+      // Retourne un mot de passe basique de la bonne longueur pour satisfaire le schéma
+      // Ce cas est extrêmement improbable.
+      const errorChar = 'X';
+      for (let i = 0; i < length; i++) { fallbackPassword += errorChar; }
+      return fallbackPassword;
+  }
+  for (let i = 0; i < length; i++) {
+    fallbackPassword += alphanumericChars.charAt(Math.floor(Math.random() * alphanumericChars.length));
+  }
+  return fallbackPassword;
+};
+
+const prompt = ai.definePrompt({
+  name: 'generatePasswordPrompt',
+  input: {schema: GeneratePasswordInputSchema},
+  output: {schema: GeneratePasswordOutputSchema},
+  prompt: `Générez un mot de passe fort et sécurisé répondant aux exigences suivantes :
+- Exactement {{length}} caractères de long.
+- DOIT inclure UNIQUEMENT un mélange de lettres majuscules (A-Z), de lettres minuscules (a-z) et de chiffres (0-9).
+- NE PAS inclure de symboles spéciaux ou de ponctuation (comme !@#$%^&*()_+-=[]{}|;:,.<>?).
+- Le mot de passe généré doit être aléatoire et imprévisible.
+
+Retournez UNIQUEMENT la chaîne de caractères du mot de passe généré, sans AUCUN texte supplémentaire, explications ou formatage.
+Exemple pour une longueur de 12 : MotDePasse123
+Ne retournez que le mot de passe.`,
+});
+
+const generatePasswordFlow = ai.defineFlow(
+  {
+    name: 'generatePasswordFlow',
+    inputSchema: GeneratePasswordInputSchema,
+    outputSchema: GeneratePasswordOutputSchema,
+  },
+  async input => {
+    const validatedInput = GeneratePasswordInputSchema.parse(input);
+    const {output} = await prompt(validatedInput);
+
+    if (!output?.password || output.password.trim().length === 0) {
+      console.warn("L'IA n'a pas retourné de mot de passe ou a retourné une chaîne vide, génération d'un mot de passe de secours alphanumérique.");
+      return { password: generateFallbackPassword(validatedInput.length) };
+    }
+
+    let finalPassword = output.password.trim();
+    
+    // Filtrer pour s'assurer qu'il est alphanumérique, au cas où l'IA dévie.
+    finalPassword = finalPassword.replace(/[^a-zA-Z0-9]/g, '');
+
+    // Si après filtrage, le mot de passe est vide (ex: l'IA n'a renvoyé que des symboles)
+    if (finalPassword.length === 0) {
+        console.warn("Le mot de passe est devenu vide après le filtrage alphanumérique, génération d'un secours.");
+        return { password: generateFallbackPassword(validatedInput.length) };
+    }
+
+    // Ajuster la longueur si nécessaire
+    if (finalPassword.length > validatedInput.length) {
+      finalPassword = finalPassword.substring(0, validatedInput.length);
+    } else if (finalPassword.length < validatedInput.length) {
+      console.warn(`L'IA a retourné un mot de passe de longueur ${finalPassword.length} (après filtrage alphanumérique), attendu ${validatedInput.length}. Le mot de passe va être complété.`);
+      let paddedPassword = finalPassword;
+      const alphanumericCharsForPadding = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; 
+      for (let i = finalPassword.length; i < validatedInput.length; i++) {
+          if (alphanumericCharsForPadding.length === 0) break; 
+          paddedPassword += alphanumericCharsForPadding.charAt(Math.floor(Math.random() * alphanumericCharsForPadding.length));
+      }
+      finalPassword = paddedPassword;
+      if (finalPassword.length === validatedInput.length) {
+        console.warn(`Mot de passe complété à ${validatedInput.length} caractères avec des caractères alphanumériques aléatoires.`);
+      } else {
+        // Ce cas devrait être très rare si alphanumericCharsForPadding n'est pas vide.
+        console.error(`Erreur lors de la complétion du mot de passe. Attendu ${validatedInput.length}, obtenu ${finalPassword.length}. Utilisation du secours global.`);
+        return { password: generateFallbackPassword(validatedInput.length) };
+      }
+    }
+    
+    // Double vérification finale, au cas où quelque chose d'imprévu se produirait
+    if (finalPassword.length !== validatedInput.length || !/^[a-zA-Z0-9]+$/.test(finalPassword)) {
+        console.warn("Le mot de passe final ne correspond pas aux critères après traitement, retournant un secours alphanumérique.");
+        return { password: generateFallbackPassword(validatedInput.length) };
+    }
+
+    return { password: finalPassword };
+  }
+);
