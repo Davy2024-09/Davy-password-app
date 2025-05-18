@@ -1,0 +1,186 @@
+
+"use client";
+
+import { useState, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { KeyRound, Copy, Sparkles } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
+import { generatePassword as generatePasswordFlow } from '@/ai/flows/generate-password-flow';
+
+export default function HomePage() {
+  const [passwordLength, setPasswordLength] = useState(16);
+  const [generatedPassword, setGeneratedPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  const handleGeneratePassword = async () => {
+    setIsLoading(true);
+    setGeneratedPassword('');
+    try {
+      const result = await generatePasswordFlow({ length: passwordLength });
+      if (result.password && result.password.length > 0) {
+        setGeneratedPassword(result.password);
+        toast({
+          title: "Mot de passe généré !",
+          description: "Votre nouveau mot de passe alphanumérique sécurisé est prêt.",
+        });
+      } else {
+        // Ce bloc ne devrait être atteint que si le flow retourne une chaîne vide de manière inattendue,
+        // car le flow lui-même a des mécanismes de secours.
+        console.error("La génération de mot de passe a résulté en un mot de passe vide inattendu depuis le flow.");
+        toast({
+          title: "Erreur Inattendue",
+          description: "Une erreur inattendue est survenue. Un mot de passe de secours local a été généré.",
+          variant: "destructive",
+        });
+         // Fallback côté client en dernier recours
+         const fallbackChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+         let clientFallback = "";
+         if (fallbackChars.length > 0) {
+            for (let i = 0; i < passwordLength; i++) {
+              clientFallback += fallbackChars.charAt(Math.floor(Math.random() * fallbackChars.length));
+            }
+            setGeneratedPassword(clientFallback);
+            console.warn("Génération d'un mot de passe de secours côté client car le flow a retourné un résultat vide inattendu.");
+         } else {
+            setGeneratedPassword("ErreurSecoursClient"); // Si même les chars de secours client sont vides
+         }
+      }
+    } catch (error) {
+      console.error("Erreur lors de la génération du mot de passe:", error);
+      let description = "Impossible de générer le mot de passe. Veuillez réessayer.";
+      if (error instanceof Error) {
+        if (error.message.includes("doit être d'au moins 8 caractères") || error.message.includes("doit pas dépasser 32 caractères")) {
+          description = error.message;
+        } else if (error.message.toLowerCase().includes("econnrefused") || error.message.toLowerCase().includes("fetchfailed")) {
+          description = "Erreur de connexion au service de génération. Veuillez vérifier votre connexion internet ou réessayer plus tard.";
+        }
+      }
+      toast({
+        title: "Erreur",
+        description: description,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCopyPassword = () => {
+    if (!generatedPassword) return;
+    navigator.clipboard.writeText(generatedPassword).then(() => {
+      toast({
+        title: "Copié dans le presse-papiers !",
+        description: "Le mot de passe a été copié.",
+      });
+    }).catch(err => {
+      console.error("Erreur de copie du mot de passe:", err);
+      toast({
+        title: "Erreur de copie",
+        description: "Impossible de copier le mot de passe dans le presse-papiers.",
+        variant: "destructive",
+      });
+    });
+  };
+
+  if (!isClient) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-8 md:p-12 lg:p-24 bg-background text-foreground">
+        <div className="text-xl text-muted-foreground">Chargement de Davy password app...</div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-start py-10 px-4 sm:p-8 md:p-12 lg:p-16 bg-background text-foreground">
+      <div className="w-full max-w-md space-y-8">
+        <header className="text-center">
+          <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-primary-foreground flex items-center justify-center">
+            <KeyRound className="mr-3 h-10 w-10 text-primary" />
+            Davy <span className="text-primary">password app</span>
+          </h1>
+          <p className="mt-3 text-lg text-muted-foreground">
+            Créez des mots de passe alphanumériques forts et sécurisés facilement.
+          </p>
+        </header>
+
+        <Card className="shadow-xl">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Sparkles className="mr-2 h-5 w-5 text-primary" />
+              Configurez votre mot de passe
+            </CardTitle>
+            <CardDescription>
+              Choisissez la longueur souhaitée pour votre nouveau mot de passe alphanumérique.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="password-length" className="text-base">Longueur du mot de passe : {passwordLength}</Label>
+              <Slider
+                id="password-length"
+                min={8}
+                max={32}
+                step={1}
+                value={[passwordLength]}
+                onValueChange={(value) => setPasswordLength(value[0])}
+                className="my-4"
+                aria-label="Sélecteur de longueur du mot de passe"
+              />
+            </div>
+            <Button onClick={handleGeneratePassword} disabled={isLoading} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+              {isLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 " xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Génération en cours...
+                </>
+              ) : 'Générer le mot de passe'}
+            </Button>
+
+            {generatedPassword && (
+              <div className="space-y-2 pt-4">
+                <Label htmlFor="generated-password" className="text-base">Mot de passe généré :</Label>
+                <div className="flex items-center space-x-2">
+                  <Input
+                    id="generated-password"
+                    type="text"
+                    value={generatedPassword}
+                    readOnly
+                    className="text-lg font-mono bg-muted border-border"
+                    aria-label="Mot de passe généré"
+                  />
+                  <Button variant="outline" size="icon" onClick={handleCopyPassword} aria-label="Copier le mot de passe">
+                    <Copy className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+          <CardFooter>
+            <p className="text-xs text-muted-foreground text-center w-full">
+              Utilisez des mots de passe alphanumériques forts et uniques pour tous vos comptes.
+            </p>
+          </CardFooter>
+        </Card>
+        
+        <footer className="text-center mt-8 py-6 border-t border-border">
+          <p className="text-sm text-muted-foreground">
+            &copy; {new Date().getFullYear()} Davy password app. Restez sécurisé !
+          </p>
+        </footer>
+      </div>
+    </main>
+  );
+}
